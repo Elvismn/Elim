@@ -103,7 +103,7 @@ const vehicleSchema = new mongoose.Schema({
   },
   nextServiceOdometer: {
     type: Number,
-    default: 5000 // Default 5000 km service interval
+    default: 5000
   },
   lastServiceDate: {
     type: Date
@@ -169,7 +169,7 @@ const vehicleSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Indexes for better query performance
+// Indexes
 vehicleSchema.index({ plateNumber: 1 });
 vehicleSchema.index({ status: 1 });
 vehicleSchema.index({ vehicleType: 1 });
@@ -216,12 +216,8 @@ vehicleSchema.virtual('registrationStatus').get(function() {
 
 // Methods
 vehicleSchema.methods.isServiceDue = function() {
-  // Check by odometer
   if (this.currentOdometer >= this.nextServiceOdometer) return true;
-  
-  // Check by date
   if (this.nextServiceDate && new Date() >= this.nextServiceDate) return true;
-  
   return false;
 };
 
@@ -235,38 +231,41 @@ vehicleSchema.methods.updateOdometer = function(newReading) {
 
 vehicleSchema.methods.calculateFuelEfficiency = function(liters, distance) {
   if (distance === 0) return 0;
-  return (liters / distance) * 100; // liters per 100km
+  return (liters / distance) * 100;
 };
 
-// Static methods
+// FIXED: Static method to get vehicles needing service
 vehicleSchema.statics.getServiceDueVehicles = async function() {
-  return this.find({
+  const today = new Date();
+  
+  // Using $expr for field-to-field comparison
+  const vehicles = await this.find({
+    status: 'active',
     $or: [
-      { currentOdometer: { $gte: '$nextServiceOdometer' } },
-      { nextServiceDate: { $lte: new Date() } }
-    ],
-    status: 'active'
+      { $expr: { $gte: ['$currentOdometer', '$nextServiceOdometer'] } },
+      { nextServiceDate: { $lte: today, $ne: null } }
+    ]
   }).populate('assignedDriver', 'firstName lastName phone');
+  
+  return vehicles;
 };
 
+// FIXED: Static method to get vehicles with expiring documents
 vehicleSchema.statics.getExpiringDocuments = async function(days = 30) {
   const date = new Date();
   date.setDate(date.getDate() + days);
   
-  return this.find({
+  const vehicles = await this.find({
     $or: [
-      { 'insurance.expiryDate': { $lte: date } },
-      { 'registration.expiryDate': { $lte: date } }
+      { 'insurance.expiryDate': { $lte: date, $ne: null } },
+      { 'registration.expiryDate': { $lte: date, $ne: null } }
     ]
   }).select('plateNumber make model insurance registration');
+  
+  return vehicles;
 };
 
-// Remove auto-populate - use explicit population instead
-// vehicleSchema.pre('find', function() {
-//   this.populate('assignedDriver', 'firstName lastName phone');
-// });
-
-// Ensure virtual fields are serialized
+// JSON configuration
 vehicleSchema.set('toJSON', {
   virtuals: true,
   transform: function(doc, ret) {
